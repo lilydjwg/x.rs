@@ -4,6 +4,7 @@ use std::process::Command;
 use std::path::{Path, PathBuf};
 use std::fs::{DirBuilder, read_dir, remove_dir, rename};
 use std::ffi::OsStr;
+use std::os::unix::process::ExitStatusExt;
 use std::os::unix::ffi::OsStrExt;
 
 fn main() {
@@ -42,8 +43,12 @@ fn extract<P: AsRef<Path>>(f: P) {
     .status()
     .expect("failed to execute extractor");
 
-  if let Some(st) = st.code() {
-    std::process::exit(st);
+  if !st.success() {
+    std::process::exit(
+      st.code().unwrap_or(
+        st.signal().unwrap() + 128
+      )
+    );
   }
 
   let mut it = read_dir(&topdir).unwrap().into_iter();
@@ -54,11 +59,16 @@ fn extract<P: AsRef<Path>>(f: P) {
 }
 
 fn move_up<D: AsRef<Path>, U: AsRef<Path>>(
-  dest: D, under: U) -> IoResult<()> {
+  dest: D, under: U,
+) -> IoResult<()> {
   let tmpdir = under.as_ref().with_file_name(".tmp.dir__");
   rename(under, &tmpdir)?;
+
   for entry in read_dir(&tmpdir)? {
-    rename(&entry?.path(), &dest)?;
+    let mut target = dest.as_ref().to_path_buf();
+    let src = entry?.path();
+    target.push(src.file_name().unwrap());
+    rename(&src, &target)?;
   }
   remove_dir(&tmpdir)
 }
