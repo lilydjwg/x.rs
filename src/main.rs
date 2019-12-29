@@ -1,20 +1,30 @@
 use std::io::Result as IoResult;
 use std::io::ErrorKind;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 use std::path::{Path, PathBuf};
-use std::fs::{DirBuilder, read_dir, remove_dir, rename};
+use std::fs::{
+  DirBuilder, read_dir, remove_dir, rename,
+  remove_file,
+};
 use std::ffi::OsStr;
 use std::os::unix::process::ExitStatusExt;
 use std::os::unix::ffi::OsStrExt;
+use std::fmt::Write;
+use std::env;
 
 fn main() {
-  for arg in std::env::args_os().skip(1) {
+  for arg in env::args_os().skip(1) {
     extract(arg);
   }
 }
 
 fn extract<P: AsRef<Path>>(f: P) {
   let f = f.as_ref();
+
+  if f.extension() == Some(OsStr::new("deb")) {
+    return extract_deb(f);
+  }
+
   let cmd = match get_cmd_for_file(f) {
     None => {
       eprintln!(
@@ -25,31 +35,16 @@ fn extract<P: AsRef<Path>>(f: P) {
   };
 
   let topdir = derive_dir_path(f);
-  if let Err(e) = DirBuilder::new().create(&topdir) {
-    if e.kind() == ErrorKind::AlreadyExists &&
-      dir_is_empty(&topdir).unwrap() {
-    } else {
-      eprintln!(
-        "target directory exists and is not empty: {}",
-        topdir.display());
-      std::process::exit(22);
-    }
-  }
+  create_target_path(&topdir);
 
   let st = Command::new(cmd[0])
     .args(&cmd[1..])
-    .arg(f)
+    .arg(Path::new("..").join(f))
     .current_dir(&topdir)
     .status()
     .expect("failed to execute extractor");
 
-  if !st.success() {
-    std::process::exit(
-      st.code().unwrap_or(
-        st.signal().unwrap() + 128
-      )
-    );
-  }
+  check_exit_status(st);
 
   let mut it = read_dir(&topdir).unwrap().into_iter();
   let first = it.next().unwrap();
@@ -58,19 +53,43 @@ fn extract<P: AsRef<Path>>(f: P) {
   }
 }
 
-fn move_up<D: AsRef<Path>, U: AsRef<Path>>(
-  dest: D, under: U,
-) -> IoResult<()> {
-  let tmpdir = under.as_ref().with_file_name(".tmp.dir__");
-  rename(under, &tmpdir)?;
-
-  for entry in read_dir(&tmpdir)? {
-    let mut target = dest.as_ref().to_path_buf();
-    let src = entry?.path();
-    target.push(src.file_name().unwrap());
-    rename(&src, &target)?;
+fn check_exit_status(st: ExitStatus) {
+  if !st.success() {
+    std::process::exit(
+      st.code().unwrap_or_else(
+        || st.signal().unwrap() + 128
+      )
+    );
   }
-  remove_dir(&tmpdir)
+}
+
+fn move_up<D: AsRef<Path>, U: AsRef<Path>>(
+  topdir: D, under: U,
+) -> IoResult<()> {
+  let basename_os = under.as_ref().file_name().unwrap();
+  let mut basename;
+  let mut updir = Path::new(basename_os);
+
+  if updir.exists() {
+    basename = basename_os.to_string_lossy().into_owned();
+    let len = basename.len();
+    let mut i = 1;
+    updir = loop {
+      write!(basename, "{}", i).unwrap();
+      let dir = Path::new(&basename);
+      if !dir.exists() {
+        break dir;
+      }
+      basename.truncate(len);
+      i += 1;
+      if i == 100 {
+        break Path::new(basename_os);
+      }
+    };
+  }
+
+  rename(under.as_ref(), &updir)?;
+  remove_dir(topdir)
 }
 
 fn derive_dir_path(p: &Path) -> PathBuf {
@@ -90,6 +109,19 @@ fn derive_dir_path(p: &Path) -> PathBuf {
   }
 }
 
+fn create_target_path(p: &Path) {
+  if let Err(e) = DirBuilder::new().create(p) {
+    if e.kind() == ErrorKind::AlreadyExists &&
+      dir_is_empty(&p).unwrap() {
+    } else {
+      eprintln!(
+        "target directory exists and is not empty: {}",
+        p.display());
+      std::process::exit(22);
+    }
+  }
+}
+
 fn dir_is_empty<P: AsRef<Path>>(dir: P) -> IoResult<bool> {
   for _ in read_dir(dir.as_ref())? {
     return Ok(false);
@@ -99,7 +131,7 @@ fn dir_is_empty<P: AsRef<Path>>(dir: P) -> IoResult<bool> {
 
 static EXTS_TO_CMD: &[(&[&str], &[&str])] = &[
   (&[".tar.gz", ".tar.xz", ".tar.bz2", ".tgz", ".txz", ".tbz", ".tar"], &["tar", "xvf"]),
-  (&[".7z", ".chm"], &["7z", "x"]),
+  (&[".7z", ".chm", ".a"], &["7z", "x"]),
   (&[".zip"], &["gbkunzip"]),
   (&[".xpi", ".jar", ".apk", ".maff", ".epub", ".crx", ".whl"], &["unzip"]),
 ];
@@ -126,4 +158,30 @@ fn get_cmd_for_file(f: &Path) -> Option<&[&str]> {
     )
   }
   None
+}
+
+fn extract_deb<P: AsRef<Path>>(f: P) {
+  let f = f.as_ref();
+  let topdir = derive_dir_path(f);
+  create_target_path(&topdir);
+
+  let st = Command::new("bsdtar")
+    .arg("xf")
+    .arg(Path::new("..").join(f))
+    .current_dir(&topdir)
+    .status()
+    .expect("failed to execute extractor bsdtar");
+
+  check_exit_status(st);
+
+  let files = read_dir(&topdir).unwrap()
+    .collect::<IoResult<Vec<_>>>().unwrap();
+
+  env::set_current_dir(&topdir).unwrap();
+  for f in files {
+    if f.file_name() != "debian-binary" {
+      extract(f.file_name());
+      remove_file(f.file_name()).unwrap();
+    }
+  }
 }
