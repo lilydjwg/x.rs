@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 twoway = "*"
+libc = "*"
 
 [profile.release]
 lto = true

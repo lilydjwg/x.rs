@@ -66,26 +66,41 @@ fn check_exit_status(st: ExitStatus) {
 fn move_up<D: AsRef<Path>, U: AsRef<Path>>(
   topdir: D, under: U,
 ) -> IoResult<()> {
+  let topdir = topdir.as_ref();
   let basename_os = under.as_ref().file_name().unwrap();
   let mut basename;
-  let mut updir = Path::new(basename_os);
+  let orig_updir = Path::new(basename_os);
+  let mut updir = orig_updir;
 
   if updir.exists() {
-    basename = basename_os.to_string_lossy().into_owned();
-    let len = basename.len();
-    let mut i = 1;
-    updir = loop {
-      write!(basename, "{}", i).unwrap();
-      let dir = Path::new(&basename);
-      if !dir.exists() {
-        break dir;
-      }
-      basename.truncate(len);
-      i += 1;
-      if i == 100 {
-        break Path::new(basename_os);
-      }
-    };
+    if updir != topdir {
+      basename = basename_os.to_string_lossy().into_owned();
+      let len = basename.len();
+      let mut i = 1;
+      updir = loop {
+        write!(basename, "{}", i).unwrap();
+        let dir = Path::new(&basename);
+        if !dir.exists() {
+          break dir;
+        }
+        basename.truncate(len);
+        i += 1;
+        if i == 100 {
+          break orig_updir;
+        }
+      };
+    } else {
+      let tempname = format!("{}.tmp.{}",
+        topdir.file_name().unwrap().to_string_lossy(),
+        unsafe { libc::getpid() });
+      let tempdir = topdir.with_file_name(tempname);
+      // move out
+      rename(under.as_ref(), &tempdir)?;
+      // remove old
+      remove_dir(topdir)?;
+      // rename to new
+      return rename(tempdir, &topdir)
+    }
   }
 
   rename(under.as_ref(), &updir)?;
@@ -130,10 +145,10 @@ fn dir_is_empty<P: AsRef<Path>>(dir: P) -> IoResult<bool> {
 }
 
 static EXTS_TO_CMD: &[(&[&str], &[&str])] = &[
-  (&[".tar.gz", ".tar.xz", ".tar.bz2", ".tgz", ".txz", ".tbz", ".tar"], &["tar", "xvf"]),
+  (&[".tar.gz", ".tar.xz", ".tar.zst", ".tar.bz2", ".tgz", ".txz", ".tbz", ".tar"], &["tar", "xvf"]),
   (&[".7z", ".chm", ".a"], &["7z", "x"]),
   (&[".zip"], &["gbkunzip"]),
-  (&[".xpi", ".jar", ".apk", ".maff", ".epub", ".crx", ".whl"], &["unzip"]),
+  (&[".xpi", ".jar", ".apk", ".maff", ".epub", ".crx", ".whl", ".xapk"], &["unzip"]),
 ];
 
 fn get_cmd_for_file(f: &Path) -> Option<&[&str]> {
@@ -179,7 +194,7 @@ fn extract_deb<P: AsRef<Path>>(f: P) {
 
   env::set_current_dir(&topdir).unwrap();
   for f in files {
-    if f.file_name() != "debian-binary" {
+    if !&["debian-binary", "_gpgorigin"].iter().any(|x| x == &f.file_name()) {
       extract(f.file_name());
       remove_file(f.file_name()).unwrap();
     }
