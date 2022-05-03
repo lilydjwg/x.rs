@@ -194,7 +194,7 @@ fn extract_deb<P: AsRef<Path>>(f: P) {
 
   env::set_current_dir(&topdir).unwrap();
   for f in files {
-    if !&["debian-binary", "_gpgorigin"].iter().any(|x| x == &f.file_name()) {
+    if !&["debian-binary", "_gpgorigin", "sign"].iter().any(|x| x == &f.file_name()) {
       extract(f.file_name());
       remove_file(f.file_name()).unwrap();
     }
