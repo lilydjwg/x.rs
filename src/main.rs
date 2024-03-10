@@ -46,10 +46,10 @@ fn extract<P: AsRef<Path>>(f: P) {
 
   check_exit_status(st);
 
-  let mut it = read_dir(&topdir).unwrap().into_iter();
+  let mut it = read_dir(&topdir).unwrap();
   let first = it.next().unwrap();
-  if let None = it.next() {
-    move_up(&topdir, &first.unwrap().path()).unwrap();
+  if it.next().is_none() {
+    move_up(&topdir, first.unwrap().path()).unwrap();
   }
 }
 
@@ -99,11 +99,11 @@ fn move_up<D: AsRef<Path>, U: AsRef<Path>>(
       // remove old
       remove_dir(topdir)?;
       // rename to new
-      return rename(tempdir, &topdir)
+      return rename(tempdir, topdir)
     }
   }
 
-  rename(under.as_ref(), &updir)?;
+  rename(under.as_ref(), updir)?;
   remove_dir(topdir)
 }
 
@@ -127,7 +127,7 @@ fn derive_dir_path(p: &Path) -> PathBuf {
 fn create_target_path(p: &Path) {
   if let Err(e) = DirBuilder::new().create(p) {
     if e.kind() == ErrorKind::AlreadyExists &&
-      dir_is_empty(&p).unwrap() {
+      dir_is_empty(p).unwrap() {
     } else {
       eprintln!(
         "target directory exists and is not empty: {}",
@@ -138,10 +138,7 @@ fn create_target_path(p: &Path) {
 }
 
 fn dir_is_empty<P: AsRef<Path>>(dir: P) -> IoResult<bool> {
-  for _ in read_dir(dir.as_ref())? {
-    return Ok(false);
-  }
-  Ok(true)
+  Ok(read_dir(dir.as_ref())?.next().is_none())
 }
 
 static EXTS_TO_CMD: &[(&[&str], &[&str])] = &[
