@@ -1,13 +1,12 @@
 [package]
 name = "x"
-version = "0.1.0"
-authors = ["lilydjwg <lilydjwg@gmail.com>"]
+version = "0.1.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-twoway = "*"
+memchr = "*"
 libc = "*"
 
 [profile.release]

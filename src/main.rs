@@ -162,7 +162,7 @@ fn get_cmd_for_file(f: &Path) -> Option<&[&str]> {
       .expect("invoke 'file' command");
 
     return Some(
-      if twoway::find_bytes(&output.stdout, b"Win32").is_some() {
+      if memchr::memmem::find(&output.stdout, b"Win32").is_some() {
         &["7z", "x"]
       } else {
         &["rar", "x"]
